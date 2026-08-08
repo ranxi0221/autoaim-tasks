@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sp_vision</name>
+  <version>0.1.0</version>
+  <description>TongjiSuperPower 自瞄算法 ROS2 包 — 从 rosbag 订阅图像和云台姿态，跑通检测/解算/跟踪链路</description>
+  <maintainer email="tiexuejuan@example.com">tiexuejuan</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- 系统依赖 -->
+  <depend>libopencv-dev</depend>
+  <depend>libfmt-dev</depend>
+  <depend>libeigen3-dev</depend>
+  <depend>libspdlog-dev</depend>
+  <depend>libyaml-cpp-dev</depend>
+  <depend>nlohmann-json3-dev</depend>
+  <depend>libusb-1.0-0-dev</depend>
+
+  <!-- ROS2 依赖 -->
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>autoaim_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

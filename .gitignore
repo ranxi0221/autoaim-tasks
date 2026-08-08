@@ -1,0 +1,13 @@
+# ROS2 自动生成目录
+build/
+install/
+log/
+
+# 大文件：数据包、视频、模型权重、压缩包一律不进 git
+bags/
+*.db3
+*.db3.zstd
+*.mp4
+*.avi
+*.onnx
+*.zip
