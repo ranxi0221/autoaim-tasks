@@ -8,10 +8,15 @@ message(STATUS "--------------------CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}-------
 
 # ament_cmake (ROS2)
 find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(autoaim_msgs REQUIRED)
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs videoio calib3d)
 # 兼容旧式 ${OpenCV_LIBS} 变量（OpenCV4 不再自动设置）
-set(OpenCV_LIBS opencv_core opencv_imgproc opencv_highgui opencv_imgcodecs opencv_videoio opencv_calib3d)
+set(OpenCV_LIBS opencv_core opencv_imgproc opencv_highgui opencv_imgcodecs opencv_videoio opencv_calib3d opencv_dnn)
 find_package(fmt REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
@@ -25,21 +30,10 @@ if(_fmt_iface_libs)
   set_target_properties(fmt::fmt PROPERTIES INTERFACE_LINK_LIBRARIES "${_fmt_fixed}")
 endif()
 
-# OpenVINO — 尝试多个路径
-# 阻止 OpenVINO cmake 全局设置 _GLIBCXX_USE_CXX11_ABI=0（系统库用新 ABI）
-set(OpenVINO_GLIBCXX_USE_CXX11_ABI "")
-set(OpenVINO_DIR "/home/tiexuejuan/.local/lib/python3.10/site-packages/openvino/cmake")
+# OpenVINO — Intel APT 版 (ABI=1，与系统库一致)
 find_package(OpenVINO QUIET)
-if(NOT OpenVINO_FOUND)
-  # 回退：尝试 Intel 官方安装路径
-  file(GLOB OPENVINO_CANDIDATES "/opt/intel/openvino*/runtime/cmake")
-  if(OPENVINO_CANDIDATES)
-    list(GET OPENVINO_CANDIDATES 0 OpenVINO_DIR)
-    find_package(OpenVINO QUIET)
-  endif()
-endif()
 if(OpenVINO_FOUND)
-  message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
+  message(STATUS "OpenVINO found: ${OpenVINO_DIR} (ABI=${OpenVINO_GLIBCXX_USE_CXX11_ABI})")
 else()
   message(WARNING "OpenVINO not found! NN-based detection (YOLO) will be disabled.")
 endif()
@@ -54,8 +48,6 @@ include_directories(${PROJECT_SOURCE_DIR})
 add_subdirectory(tools)
 add_subdirectory(io)
 if(OpenVINO_FOUND)
-  # OpenVINO 用旧 C++ ABI，这些目标需要与之匹配
-  add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
   add_subdirectory(tasks/auto_aim)
   add_subdirectory(tasks/omniperception)
   if(Ceres_FOUND)
@@ -86,7 +78,13 @@ target_link_libraries(uav ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff to
 target_link_libraries(uav_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 endif()
 
-##################calibration################
+	#################### ROS2 bag replay node (M2) ####################
+	add_executable(bag_replay_node src/bag_replay_node.cpp)
+	target_link_libraries(bag_replay_node ${OpenCV_LIBS} Eigen3::Eigen)
+	ament_target_dependencies(bag_replay_node
+	  rclcpp sensor_msgs autoaim_msgs cv_bridge message_filters)
+
+	##################calibration################
 add_executable(capture calibration/capture.cpp)
 add_executable(calibrate_camera calibration/calibrate_camera.cpp)
 add_executable(calibrate_handeye calibration/calibrate_handeye.cpp)
@@ -171,5 +169,28 @@ if(sp_msgs_FOUND AND OpenVINO_FOUND)
 else()
     message(STATUS "ROS2 environment not found, skipping ROS2-related code.")
 endif()
+
+# 安装所有可执行文件到 ROS2 标准路径
+install(TARGETS
+  # M2 ROS2 bag replay node
+  bag_replay_node
+  # src executables (auto_aim + auto_buff)
+  standard mt_standard standard_mpc
+  auto_aim_debug_mpc mt_auto_aim_debug
+  auto_buff_debug auto_buff_debug_mpc
+  uav uav_debug
+  # calibration
+  capture calibrate_camera calibrate_handeye
+  calibrate_robotworld_handeye split_video
+  # tests (no OpenVINO)
+  camera_test cboard_test fire_test gimbal_response_test
+  multi_usbcamera_test usbcamera_test dm_test
+  # tests (need OpenVINO)
+  auto_aim_test auto_buff_test camera_detect_test
+  camera_thread_test detector_video_test usbcamera_detect_test
+  handeye_test minimum_vision_system gimbal_test
+  planner_test planner_test_offline
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()
