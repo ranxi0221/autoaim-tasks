@@ -11,7 +11,6 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
-find_package(message_filters REQUIRED)
 find_package(autoaim_msgs REQUIRED)
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs videoio calib3d)
@@ -82,7 +81,7 @@ endif()
 	add_executable(bag_replay_node src/bag_replay_node.cpp)
 	target_link_libraries(bag_replay_node ${OpenCV_LIBS} Eigen3::Eigen)
 	ament_target_dependencies(bag_replay_node
-	  rclcpp sensor_msgs autoaim_msgs cv_bridge message_filters)
+	  rclcpp sensor_msgs autoaim_msgs cv_bridge)
 
 	##################calibration################
 add_executable(capture calibration/capture.cpp)
