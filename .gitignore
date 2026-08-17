@@ -11,3 +11,9 @@ bags/
 *.avi
 *.onnx
 *.zip
+
+# 本地敏感/临时文件（不入库）
+.gh-token.json
+.github-ca-bundle.crt
+.gh-config/
+.gh-cache/
