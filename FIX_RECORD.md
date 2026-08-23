@@ -223,9 +223,9 @@ PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-
 **日期**: 2026-08-23
 
 **完成了什么**:
-- `autoaim_msgs` 新增 `TargetState.msg`（13 字段：世界系位置/速度、yaw、角速度、半径、状态、帧号、云台姿态对照量）
-- `bag_replay_node` 每个配对帧发布一次 `/target/state` 话题（无目标时也发，保证 state 曲线连续）
-- 安装 PlotJuggler（`ros-humble-plotjuggler-ros`），实时订阅 `/target/state` 画曲线：x/y/z 同图 + state 阶梯线
+- `autoaim_msgs` 新增 `TargetState.msg`（16 字段：目标旋转中心位置/速度/yaw/角速度/半径、**可见装甲板位置 armor_x/y/z**、状态、帧号、云台姿态对照量）
+- `bag_replay_node` 每个配对帧发布一次 `/target/state` 话题（无目标时也发，保证 state 曲线连续）；armor 位置取 track 后优先级最高的装甲板的 `xyz_in_world`（PnP 直测值）
+- 安装 PlotJuggler（`ros-humble-plotjuggler-ros`），实时订阅 `/target/state` 画曲线：target x/y/z 与 armor x/y/z 同图对照 + state 阶梯线
 
 **怎么验证的**:
 
@@ -234,7 +234,7 @@ PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-
    - z 轴 σ=12mm（高度极稳）→ 6mm 内外参 + 坐标变换 + 时间戳对齐正确
    - tracking 期间 gimbal_yaw 扫过 -0.44~0.17 rad（约 35°）——**运动云台下世界系目标不漂移**，正是任务书验收点
    - 12 次 >0.1m 跳变全部对应换板/重新入视瞬态（M4 已记录），相邻帧间无毛刺
-2. **视觉验收**：PlotJuggler 曲线实时滚动，检测窗口 + 曲线同屏录屏 20s（见下）
+2. **视觉验收**：PlotJuggler **双曲线对照**——target（EKF 旋转中心，平滑稳定）与 armor（PnP 直测可见板位置，随换板围绕 target 摆动 ±旋转半径 0.2m），一静一动的对比直观展示 EKF 的平滑作用；检测窗口 + 曲线同屏录屏 20s（见下）
 
 ![PlotJuggler 曲线（x/y/z + state）](shots/plotjuggler_curves.png)
 

@@ -157,6 +157,13 @@ private:
         msg.x = px; msg.y = py; msg.z = pz;
         msg.vx = vx; msg.vy = vy; msg.vz = vz;
         msg.yaw = yaw; msg.w = w; msg.r = r;
+        // armor position：当前可见装甲板 PnP 直接解算值（track 后 armors 已按优先级排序，
+        // front() 即被跟踪的那块，xyz_in_world 由 solver.solve 写入）
+        if (!armors.empty()) {
+          msg.armor_x = armors.front().xyz_in_world[0];
+          msg.armor_y = armors.front().xyz_in_world[1];
+          msg.armor_z = armors.front().xyz_in_world[2];
+        }
         static const std::map<std::string, int8_t> STATE_ID = {
           {"lost", 0}, {"detecting", 1}, {"tracking", 2}, {"temp_lost", 3}, {"switching", 4}};
         auto it = STATE_ID.find(state);
