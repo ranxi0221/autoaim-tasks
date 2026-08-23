@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <autoaim_msgs/msg/orienta.hpp>
+#include <autoaim_msgs/msg/target_state.hpp>
 #include <cv_bridge/cv_bridge.h>
 
 #include <chrono>
@@ -18,6 +19,7 @@
 #include "tasks/auto_aim/solver.hpp"
 #include "tasks/auto_aim/tracker.hpp"
 #include "tools/img_tools.hpp"
+#include "tools/math_tools.hpp"
 
 using namespace std::chrono;
 
@@ -55,6 +57,9 @@ public:
         pending_image_ = msg;
         try_pair();
       });
+
+    // M5: 发布目标状态话题，供 PlotJuggler 画曲线
+    target_state_pub_ = this->create_publisher<autoaim_msgs::msg::TargetState>("/target/state", 10);
 
     // 订阅四元数
     quat_sub_ = this->create_subscription<autoaim_msgs::msg::Orienta>(
@@ -146,6 +151,23 @@ private:
         RCLCPP_WARN(this->get_logger(), "track failed: %s", e.what());
       }
 
+      // M5: 发布 /target/state（每配对帧一次；无目标时也发，保证 state 曲线连续）
+      {
+        auto msg = autoaim_msgs::msg::TargetState();
+        msg.x = px; msg.y = py; msg.z = pz;
+        msg.vx = vx; msg.vy = vy; msg.vz = vz;
+        msg.yaw = yaw; msg.w = w; msg.r = r;
+        static const std::map<std::string, int8_t> STATE_ID = {
+          {"lost", 0}, {"detecting", 1}, {"tracking", 2}, {"temp_lost", 3}, {"switching", 4}};
+        auto it = STATE_ID.find(state);
+        msg.state = it != STATE_ID.end() ? it->second : -1;
+        msg.frame = frame_count_;
+        auto gimbal_eulers = tools::eulers(solver_->R_gimbal2world(), 2, 1, 0);
+        msg.gimbal_yaw = gimbal_eulers[0];
+        msg.gimbal_pitch = gimbal_eulers[1];
+        target_state_pub_->publish(msg);
+      }
+
       // M3/M4: 自己再画一版检测框（YOLO debug 窗口在无显示器环境不可见），
       // 每 30 帧存一张截图到 shots/ 作为验收证据
       if (frame_count_ % 30 == 0) {
@@ -158,28 +180,13 @@ private:
           tools::draw_text(vis, info, armor.center, {0, 255, 0});
         }
         // M4: 把跟踪目标重投影回像素画上（橙色），与检测框（绿色）重合 = PnP+位姿正确
-        // 整车 4 块板全部投影太乱，只画与当前检测平均像素距离最近的那块
-        if (!targets.empty() && !armors.empty()) {
+        // 整车 4 块板全部投影：可见板与检测框重合，其余 3 块是背面/侧面板的预测位置
+        if (!targets.empty()) {
           const auto & target = targets.front();
-          std::vector<cv::Point2f> best_pts;
-          double best_dist = 1e9;
           for (const auto & xyza : target.armor_xyza_list()) {
             auto pts = solver_->reproject_armor(
               xyza.head<3>(), xyza[3], target.armor_type, target.name);
-            for (const auto & armor : armors) {
-              double sum = 0;
-              for (size_t i = 0; i < pts.size() && i < armor.points.size(); ++i) {
-                sum += cv::norm(pts[i] - armor.points[i]);
-              }
-              double mean = sum / pts.size();
-              if (mean < best_dist) {
-                best_dist = mean;
-                best_pts = pts;
-              }
-            }
-          }
-          if (!best_pts.empty()) {
-            tools::draw_points(vis, best_pts, {0, 128, 255}, 3);
+            tools::draw_points(vis, pts, {0, 128, 255}, 3);
           }
         }
         auto shot_path =
@@ -216,6 +223,7 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Subscription<autoaim_msgs::msg::Orienta>::SharedPtr quat_sub_;
+  rclcpp::Publisher<autoaim_msgs::msg::TargetState>::SharedPtr target_state_pub_;
 
   std::unique_ptr<auto_aim::YOLO> detector_;
   std::unique_ptr<auto_aim::Solver> solver_;

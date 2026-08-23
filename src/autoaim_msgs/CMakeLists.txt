@@ -13,6 +13,7 @@ find_package(rosidl_default_generators REQUIRED)
 # 生成消息接口
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Orienta.msg"
+  "msg/TargetState.msg"
 )
 
 # 导出以便其他包依赖
