@@ -3,6 +3,9 @@ build/
 install/
 log/
 
+# ROS2 运行时日志（节点默认写这里）
+.ros-log/
+
 # 大文件：数据包、视频、模型权重、压缩包一律不进 git
 bags/
 *.db3
