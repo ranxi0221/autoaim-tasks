@@ -1,5 +1,5 @@
-enemy_color: "red"
-# enemy_color: "blue"
+# enemy_color: "red"
+enemy_color: "blue"   # bag 场景是蓝方装甲板（M3 检出 100% blue/one/big）
 
 #####-----神经网络参数-----#####
 yolo_name: yolov5

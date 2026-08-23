@@ -15,6 +15,8 @@
 
 #include "tasks/auto_aim/yolo.hpp"
 #include "tasks/auto_aim/armor.hpp"
+#include "tasks/auto_aim/solver.hpp"
+#include "tasks/auto_aim/tracker.hpp"
 #include "tools/img_tools.hpp"
 
 using namespace std::chrono;
@@ -31,6 +33,16 @@ public:
       RCLCPP_INFO(this->get_logger(), "YOLO detector loaded from %s", config_path.c_str());
     } catch (const std::exception & e) {
       RCLCPP_ERROR(this->get_logger(), "Failed to load YOLO detector: %s", e.what());
+      throw;
+    }
+
+    // M4: 解算 + 跟踪（solver 必须先于 tracker 构造，tracker 持有 solver 引用）
+    try {
+      solver_ = std::make_unique<auto_aim::Solver>(config_path);
+      tracker_ = std::make_unique<auto_aim::Tracker>(config_path, *solver_);
+      RCLCPP_INFO(this->get_logger(), "Solver+Tracker loaded from %s", config_path.c_str());
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to init solver/tracker: %s", e.what());
       throw;
     }
 
@@ -116,7 +128,25 @@ private:
         RCLCPP_WARN(this->get_logger(), "detect failed: %s", e.what());
       }
 
-      // M3: 自己再画一版检测框（YOLO debug 窗口在无显示器环境不可见），
+      // M4: 解算 + 跟踪（每帧必须先 set_R_gimbal2world，track 内部才调 solve 做 PnP）
+      std::list<auto_aim::Target> targets;
+      std::string state = "lost";
+      double px = 0, py = 0, pz = 0, vx = 0, vy = 0, vz = 0, yaw = 0, w = 0, r = 0;
+      try {
+        solver_->set_R_gimbal2world(q);
+        targets = tracker_->track(armors, t);
+        state = tracker_->state();
+        if (!targets.empty()) {
+          auto x = targets.front().ekf_x();   // [x,vx,y,vy,z,vz,angle,w,r,l,h]
+          px = x[0]; py = x[2]; pz = x[4];
+          vx = x[1]; vy = x[3]; vz = x[5];
+          yaw = x[6]; w = x[7]; r = x[8];
+        }
+      } catch (const std::exception & e) {
+        RCLCPP_WARN(this->get_logger(), "track failed: %s", e.what());
+      }
+
+      // M3/M4: 自己再画一版检测框（YOLO debug 窗口在无显示器环境不可见），
       // 每 30 帧存一张截图到 shots/ 作为验收证据
       if (frame_count_ % 30 == 0) {
         auto vis = cv_img.clone();
@@ -127,8 +157,17 @@ private:
             auto_aim::ARMOR_NAMES[armor.name], auto_aim::ARMOR_TYPES[armor.type]);
           tools::draw_text(vis, info, armor.center, {0, 255, 0});
         }
+        // M4: 把跟踪目标重投影回像素画上（橙色），与检测框（绿色）重合 = PnP+位姿正确
+        if (!targets.empty()) {
+          const auto & target = targets.front();
+          for (const auto & xyza : target.armor_xyza_list()) {
+            auto pts = solver_->reproject_armor(
+              xyza.head<3>(), xyza[3], target.armor_type, target.name);
+            tools::draw_points(vis, pts, {0, 128, 255}, 3);
+          }
+        }
         auto shot_path =
-          fmt::format("shots/m3_frame{:04d}_armors{}.jpg", frame_count_, armor_count);
+          fmt::format("shots/m4_frame{:04d}_{}_armors{}.jpg", frame_count_, state, armor_count);
         try {
           std::filesystem::create_directories("shots");
           cv::imwrite(shot_path, vis);
@@ -138,15 +177,19 @@ private:
         }
       }
 
-      // M2 验证输出 + M3 检测结果
+      // M2 验证输出 + M3 检测结果 + M4 跟踪结果
       RCLCPP_INFO(this->get_logger(),
-        "PAIRED [frame %d] stamp=%u | q=(%.3f,%.3f,%.3f,%.3f) | img=%dx%d | dt=%.2fms | armors=%d",
+        "PAIRED [frame %d] stamp=%u | q=(%.3f,%.3f,%.3f,%.3f) | img=%dx%d | dt=%.2fms | armors=%d | state=%s | pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) | yaw=%.2f w=%.2f r=%.2f",
         frame_count_,
         img_msg->header.stamp.nanosec,
         q.w(), q.x(), q.y(), q.z(),
         cv_img.cols, cv_img.rows,
         dt_ms,
-        armor_count);
+        armor_count,
+        state.c_str(),
+        px, py, pz,
+        vx, vy, vz,
+        yaw, w, r);
 
       // 每 60 帧刷一次显示窗口（imshow 是异步的，waitKey 让它真正渲染）
       if (frame_count_ % 60 == 0) {
@@ -159,6 +202,8 @@ private:
   rclcpp::Subscription<autoaim_msgs::msg::Orienta>::SharedPtr quat_sub_;
 
   std::unique_ptr<auto_aim::YOLO> detector_;
+  std::unique_ptr<auto_aim::Solver> solver_;
+  std::unique_ptr<auto_aim::Tracker> tracker_;
 
   sensor_msgs::msg::Image::SharedPtr pending_image_;
   autoaim_msgs::msg::Orienta::SharedPtr pending_quat_;
