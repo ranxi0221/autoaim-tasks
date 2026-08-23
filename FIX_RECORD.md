@@ -218,21 +218,83 @@ PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-
 
 ---
 
+## M5 — PlotJuggler 曲线 ✅ 完成
+
+**日期**: 2026-08-23
+
+**完成了什么**:
+- `autoaim_msgs` 新增 `TargetState.msg`（13 字段：世界系位置/速度、yaw、角速度、半径、状态、帧号、云台姿态对照量）
+- `bag_replay_node` 每个配对帧发布一次 `/target/state` 话题（无目标时也发，保证 state 曲线连续）
+- 安装 PlotJuggler（`ros-humble-plotjuggler-ros`），实时订阅 `/target/state` 画曲线：x/y/z 同图 + state 阶梯线
+
+**怎么验证的**:
+
+1. **数值验收**（`ros2 topic echo /target/state` 落盘 605 条，tracking 段 433 帧，python 回归分析）：
+   - x/y/z 线性回归斜率 **0.12 / -0.12 / 0.02 mm/帧**——相对 1.35m 距离与 ±0.1m 换板振荡可忽略 → **无系统性漂移**
+   - z 轴 σ=12mm（高度极稳）→ 6mm 内外参 + 坐标变换 + 时间戳对齐正确
+   - tracking 期间 gimbal_yaw 扫过 -0.44~0.17 rad（约 35°）——**运动云台下世界系目标不漂移**，正是任务书验收点
+   - 12 次 >0.1m 跳变全部对应换板/重新入视瞬态（M4 已记录），相邻帧间无毛刺
+2. **视觉验收**：PlotJuggler 曲线实时滚动，检测窗口 + 曲线同屏录屏 20s（见下）
+
+![PlotJuggler 曲线（x/y/z + state）](shots/plotjuggler_curves.png)
+
+**录屏证据**：`shots/m5_recording.webm`（20s，识别画面 + PlotJuggler 曲线同屏滚动）
+
+**修改的文件**:
+- `src/autoaim_msgs/msg/TargetState.msg` — 新建
+- `src/autoaim_msgs/CMakeLists.txt` — 追加生成 TargetState.msg
+- `src/sp_vision/src/bag_replay_node.cpp` — 发布 /target/state
+
+**遇到的主要问题**:
+1. **PlotJuggler 启动即崩溃**：崩溃栈显示 Qt5 库加载自 `/opt/MVS/bin`——海康相机 SDK 把自带 Qt 塞进了 `LD_LIBRARY_PATH`（~/.bashrc），PlotJuggler 捡到这套没有 xcb 平台插件的 Qt 后 abort。解决：启动前把 `LD_LIBRARY_PATH` 里的 `/opt/MVS` 路径过滤掉，用系统 Qt 启动
+2. **PlotJuggler 插件报 `package 'autoaim_msgs' not found`**：启动 PlotJuggler 的终端没 source 工作区 `install/setup.bash`，和 M2 踩的是同一个坑（这次踩在 plotjuggler-ros 插件上）。解决：先 `source ~/sp_vision_ws/install/setup.bash` 再启动
+3. **新手 GUI 上手困难**：话题列表是点击订阅按钮时的一次性快照，节点没起时列表为空；字段在左侧树里，需要拖拽到图区。已把正确操作顺序固化到"项目说明"的运行方式里
+
+**还没解决什么**:
+- 换板瞬态在曲线上表现为周期性小尖峰（M4 遗留问题），幅度约 0.1~0.6m，不影响跟踪稳定性
+- `--loop` 播放时 PlotJuggler 曲线会无限累积，观看时需手动清空（工具栏 Clear 按钮）
+- GNOME 自带录屏画质一般，正式答辩如需更高质量可用 OBS 重录
+
+---
+
 ## 三、项目说明
 
 （按任务书 §4.3，做到 M3 后开始稳定维护）
 
-**项目功能**: 从 rosbag 回放订阅 `/image_raw` + `/imu/quaternion`，同帧同序配对后送 YOLO 检测装甲板，经 PnP 解算 + EKF 跟踪输出世界系目标位置/速度/姿态，并定期保存检测与重投影截图。已跑通 M1 编译 → M2 配对 → M3 检测 → M4 解算+跟踪；M5 PlotJuggler 曲线待做。
+**项目功能**: 从 rosbag 回放订阅 `/image_raw` + `/imu/quaternion`，同帧同序配对后送 YOLO 检测装甲板，经 PnP 解算 + EKF 跟踪输出世界系目标位置/速度/姿态，发布 `/target/state` 话题供 PlotJuggler 实时画曲线，并定期保存检测与重投影截图。**M1~M5 五个里程碑全部跑通。**
+
+**运行方式**（三终端）:
+```bash
+# T1 节点（cwd 必须是 src/sp_vision，配置/模型是相对路径）
+cd src/sp_vision && source ../../install/setup.bash && ros2 run sp_vision bag_replay_node
+# T2 回放（两个终端都要 source 工作区，否则报 autoaim_msgs not found）
+source install/setup.bash && ros2 bag play bags/move_translate_bag [--loop]
+# T3 曲线（注意过滤海康 MVS 的 LD_LIBRARY_PATH 污染，否则 Qt 崩溃）
+source install/setup.bash && export LD_LIBRARY_PATH=$(printf '%s' "$LD_LIBRARY_PATH" | tr ':' '\n' | grep -v '/opt/MVS' | paste -sd: -) && ros2 run plotjuggler plotjuggler
+```
+PlotJuggler 操作顺序：**先起 T1/T2 再点 ROS2 Topic Subscriber**（话题列表是点击时的快照）→ 勾选 `/target/state` → 左侧树把 x/y/z 拖进图区（右键图区 Split horizontally 可给 state 单开一行）。
 
 **依赖**: Ubuntu 22.04 + ROS2 Humble；系统库 `libopencv-dev libfmt-dev libeigen3-dev libspdlog-dev libyaml-cpp-dev libusb-1.0-0-dev nlohmann-json3-dev libceres-dev`；OpenVINO（Intel APT 版，ABI=1）；ROS 包 `rclcpp sensor_msgs cv_bridge autoaim_msgs`。
 
 **输入源**: `bags/move_translate_bag`（运动云台 + 静止目标场景）。两个话题：`/image_raw`（sensor_msgs/Image，1280×1024 BGR8）和 `/imu/quaternion`（autoaim_msgs/Orienta），同帧同序、reliable QoS，每循环 1247 帧。
 
-**输出话题或结果**: 目前节点不发话题。终端输出每条配对信息（`PAIRED [frame N] stamp/q/img/dt/armors/state/pos/vel/yaw/w/r`）和退出时的分类统计；检测 + 重投影截图存 `shots/`。（M5 计划把目标位置等关键量发成话题给 PlotJuggler 画曲线）
+**输出话题或结果**: 话题 `/target/state`（autoaim_msgs/msg/TargetState：世界系位置/速度/yaw/角速度/半径/状态/帧号/云台姿态，PlotJuggler 直接订阅画曲线）；终端输出每条配对信息（`PAIRED [frame N] stamp/q/img/dt/armors/state/pos/vel/yaw/w/r`）和退出时的分类统计；检测 + 重投影截图存 `shots/`。
 
 **参数入口**: `configs/standard3.yaml`（模型路径、`device`、`min_confidence`、`use_traditional`、6mm 相机内外参、相机参数等）；运行时 `ros2 run sp_vision bag_replay_node <config_path>`，默认 `configs/standard3.yaml`。
 
 **当前已知局限**: CPU 推理（~31~34fps，跟不上 46.5fps 回放会掉帧）；无显示器环境无实时可视化窗口；`--loop` 边界有负 dt；节点中途启动时计数不等但配对正确；仅验证过单一蓝方大装甲板场景；换板瞬态位置跳变；tracker 选目标图像中心硬编码 1440×1080。
+
+---
+
+## 四、交付清单自查（任务书 §八）
+
+1. **完整代码** ✅ — sp_vision（ROS2 化 + bag 回放节点，检测/解算/跟踪/发布全链路）+ 自建 autoaim_msgs（Orienta + TargetState）；6mm 档内外参已填入 `configs/standard3.yaml`（任务书 §5.1 数值）
+2. **跑通证据** ✅（均存 `shots/` 并在上文引用）
+   - colcon build 成功截图：`shots/colcon_build.png`（M1 节）
+   - M3 检测框截图：`shots/m3_frame*.jpg`（118 张，示例见 M3 节）
+   - M5 PlotJuggler 曲线截图：`shots/plotjuggler_curves.png`
+   - 10~30s 录屏（识别画面 + 曲线同屏）：`shots/m5_recording.webm`（20s）
+3. **FIX_RECORD.md** ✅ — 按 §4.3 固定结构：仓库简介 / `## M1`~`## M5` 里程碑（每块含完成了什么、怎么验证、修改了什么、遇到的问题、怎么排查解决、还没解决什么）/ 项目说明
 
 ---
 
