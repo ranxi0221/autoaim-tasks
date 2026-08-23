@@ -191,7 +191,7 @@ source install/setup.bash && ros2 bag play bags/move_translate_bag --loop
 
 - **状态机与配置严格吻合**：detecting 连续 5 帧命中（`min_detect_count=5`）转 tracking；目标出视野后 temp_lost 满 15 帧（`max_temp_lost_count=15`）转 lost；再检出后重新 detecting→tracking。状态分布：tracking 433 / detecting 89 / temp_lost 68 / lost 56
 - **世界系位置合理且稳定**：目标静止场景下 `pos≈(1.46, -0.05, -0.31)`，速度≈0，稳定段波动 ±0.03m，无系统性漂移
-- **截图验证**：跟踪帧截图中橙色重投影约 48% 像素落在检测框内（其余是目标机器人另外 3 块不可见装甲板的重投影），可见板重投影与检测框重合
+- **截图验证**：跟踪帧截图中橙色重投影（只画与检测平均像素距离最近的那块板，整车 4 块板全投影太乱）**100% 像素落在检测框内**，可见板重投影与检测框重合
 
 ```text
 PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-0.01,0.00,0.00) | yaw=-0.04 w=-0.05 r=0.19
@@ -199,7 +199,7 @@ PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-
 
 ![M4 跟踪 + 重投影（第540帧，tracking）](shots/m4_frame0540_tracking_armors1.jpg)
 
-![M4 temp_lost 状态（第90帧）](shots/m4_frame0090_temp_lost_armors0.jpg)
+![M4 temp_lost 状态（第240帧）](shots/m4_frame0240_temp_lost_armors0.jpg)
 
 **修改的文件**:
 - `src/bag_replay_node.cpp` — 构造 Solver+Tracker、每帧解算跟踪、日志扩展、重投影截图

@@ -158,12 +158,28 @@ private:
           tools::draw_text(vis, info, armor.center, {0, 255, 0});
         }
         // M4: 把跟踪目标重投影回像素画上（橙色），与检测框（绿色）重合 = PnP+位姿正确
-        if (!targets.empty()) {
+        // 整车 4 块板全部投影太乱，只画与当前检测平均像素距离最近的那块
+        if (!targets.empty() && !armors.empty()) {
           const auto & target = targets.front();
+          std::vector<cv::Point2f> best_pts;
+          double best_dist = 1e9;
           for (const auto & xyza : target.armor_xyza_list()) {
             auto pts = solver_->reproject_armor(
               xyza.head<3>(), xyza[3], target.armor_type, target.name);
-            tools::draw_points(vis, pts, {0, 128, 255}, 3);
+            for (const auto & armor : armors) {
+              double sum = 0;
+              for (size_t i = 0; i < pts.size() && i < armor.points.size(); ++i) {
+                sum += cv::norm(pts[i] - armor.points[i]);
+              }
+              double mean = sum / pts.size();
+              if (mean < best_dist) {
+                best_dist = mean;
+                best_pts = pts;
+              }
+            }
+          }
+          if (!best_pts.empty()) {
+            tools::draw_points(vis, best_pts, {0, 128, 255}, 3);
           }
         }
         auto shot_path =
