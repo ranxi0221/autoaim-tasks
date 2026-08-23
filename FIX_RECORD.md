@@ -175,21 +175,64 @@ source install/setup.bash && ros2 bag play bags/move_translate_bag --loop
 
 ---
 
+## M4 — 解算 + 跟踪 ✅ 完成
+
+**日期**: 2026-08-23
+
+**完成了什么**:
+- `bag_replay_node` 接入 `auto_aim::Solver`（PnP 解算）和 `auto_aim::Tracker`（EKF 跟踪），复刻原项目 `standard.cpp` 的接线：每帧先 `set_R_gimbal2world(q)`（内部做 IMU 安装外参 sandwich 补偿），再 `tracker.track(armors, t)`（内部按需调 `solver.solve` 做 PnP）
+- 输出世界系目标状态：旋转中心位置/速度（EKF 11 维状态 `[x,vx,y,vy,z,vz,angle,w,r,l,h]` 的前 6 维）、yaw、yaw 角速度、旋转半径
+- 日志每帧追加 `state` 和 `pos/vel/yaw/w/r` 字段；每 30 帧截图把跟踪目标**重投影**回像素画上（橙色），与检测框（绿色）对比，验证解算正确性
+- `configs/standard3.yaml` 的 `enemy_color` 由 red 改为 blue（bag 场景是蓝方装甲板）
+
+**怎么验证的**:
+
+单次播放（不加 `--loop`）一次运行配对 646 帧：
+
+- **状态机与配置严格吻合**：detecting 连续 5 帧命中（`min_detect_count=5`）转 tracking；目标出视野后 temp_lost 满 15 帧（`max_temp_lost_count=15`）转 lost；再检出后重新 detecting→tracking。状态分布：tracking 433 / detecting 89 / temp_lost 68 / lost 56
+- **世界系位置合理且稳定**：目标静止场景下 `pos≈(1.46, -0.05, -0.31)`，速度≈0，稳定段波动 ±0.03m，无系统性漂移
+- **截图验证**：跟踪帧截图中橙色重投影约 48% 像素落在检测框内（其余是目标机器人另外 3 块不可见装甲板的重投影），可见板重投影与检测框重合
+
+```text
+PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-0.01,0.00,0.00) | yaw=-0.04 w=-0.05 r=0.19
+```
+
+![M4 跟踪 + 重投影（第540帧，tracking）](shots/m4_frame0540_tracking_armors1.jpg)
+
+![M4 temp_lost 状态（第90帧）](shots/m4_frame0090_temp_lost_armors0.jpg)
+
+**修改的文件**:
+- `src/bag_replay_node.cpp` — 构造 Solver+Tracker、每帧解算跟踪、日志扩展、重投影截图
+- `configs/standard3.yaml` — `enemy_color` 改 blue
+
+**遇到的主要问题**:
+1. **enemy_color 配错会静默无目标**：原配置是 red，tracker 按颜色过滤会丢掉 bag 里全部蓝方装甲板，永远不出目标。排查：M3 分类统计 100% `blue/one/big` → 确认场景是蓝方 → 改 `enemy_color: "blue"`
+2. **跟踪中位置出现单次跳变**：第 203~210 帧 px 从 1.70m 跳到 1.11m，约 10 帧后收敛回 1.4m 附近，伴随 y 从 -0.02 摆到 -0.21——发生在云台扫过目标换板时（EKF 重新匹配装甲板 id），属瞬态而非发散。留到 M5 用曲线进一步观察
+3. **处理速度跟不上回放**：CPU 推理约 31~34fps < bag 的 46.5fps，reliable QoS 下播放器会等待，单次播放只消费 646/1247 帧（dt 拉大到 50~117ms）。对 tracker 无实质影响（个别 dt>0.1s 的帧会触发一次重置但立即恢复 detecting），如实记录
+4. **tracker 选目标的图像中心硬编码 1440×1080**（tracker.cpp 原项目遗留），bag 是 1280×1024：单目标场景无影响，多目标时选板会偏向画面一侧，本次不修改
+
+**还没解决什么**:
+- 换板瞬态跳变（问题 2）未根治，M5 用 PlotJuggler 曲线观察其频率与幅度
+- 图像中心硬编码（问题 4）多目标场景需要改
+- 处理速度瓶颈（CPU 推理）导致回放掉帧，M5 可能需要 `--rate` 放慢或继续尝试 GPU
+
+---
+
 ## 三、项目说明
 
 （按任务书 §4.3，做到 M3 后开始稳定维护）
 
-**项目功能**: 从 rosbag 回放订阅 `/image_raw` + `/imu/quaternion`，同帧同序配对后送 YOLO 检测装甲板，输出分类统计并定期保存检测截图。已跑通 M1 编译 → M2 配对 → M3 检测；M4 解算+跟踪、M5 PlotJuggler 曲线待做。
+**项目功能**: 从 rosbag 回放订阅 `/image_raw` + `/imu/quaternion`，同帧同序配对后送 YOLO 检测装甲板，经 PnP 解算 + EKF 跟踪输出世界系目标位置/速度/姿态，并定期保存检测与重投影截图。已跑通 M1 编译 → M2 配对 → M3 检测 → M4 解算+跟踪；M5 PlotJuggler 曲线待做。
 
 **依赖**: Ubuntu 22.04 + ROS2 Humble；系统库 `libopencv-dev libfmt-dev libeigen3-dev libspdlog-dev libyaml-cpp-dev libusb-1.0-0-dev nlohmann-json3-dev libceres-dev`；OpenVINO（Intel APT 版，ABI=1）；ROS 包 `rclcpp sensor_msgs cv_bridge autoaim_msgs`。
 
 **输入源**: `bags/move_translate_bag`（运动云台 + 静止目标场景）。两个话题：`/image_raw`（sensor_msgs/Image，1280×1024 BGR8）和 `/imu/quaternion`（autoaim_msgs/Orienta），同帧同序、reliable QoS，每循环 1247 帧。
 
-**输出话题或结果**: 目前节点不发话题。终端输出每条配对信息（`PAIRED [frame N] stamp/q/img/dt/armors`）和退出时的分类统计；检测截图存 `shots/`。（M5 计划把目标位置等关键量发成话题给 PlotJuggler 画曲线）
+**输出话题或结果**: 目前节点不发话题。终端输出每条配对信息（`PAIRED [frame N] stamp/q/img/dt/armors/state/pos/vel/yaw/w/r`）和退出时的分类统计；检测 + 重投影截图存 `shots/`。（M5 计划把目标位置等关键量发成话题给 PlotJuggler 画曲线）
 
 **参数入口**: `configs/standard3.yaml`（模型路径、`device`、`min_confidence`、`use_traditional`、6mm 相机内外参、相机参数等）；运行时 `ros2 run sp_vision bag_replay_node <config_path>`，默认 `configs/standard3.yaml`。
 
-**当前已知局限**: CPU 推理；无显示器环境无实时可视化窗口；`--loop` 边界有负 dt；节点中途启动时计数不等但配对正确；仅验证过单一蓝方大装甲板场景。
+**当前已知局限**: CPU 推理（~31~34fps，跟不上 46.5fps 回放会掉帧）；无显示器环境无实时可视化窗口；`--loop` 边界有负 dt；节点中途启动时计数不等但配对正确；仅验证过单一蓝方大装甲板场景；换板瞬态位置跳变；tracker 选目标图像中心硬编码 1440×1080。
 
 ---
 
