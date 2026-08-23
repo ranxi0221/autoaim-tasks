@@ -75,13 +75,13 @@ target_link_libraries(auto_buff_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_buff
 target_link_libraries(auto_buff_debug_mpc ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_buff tools io ${CERES_LIBRARIES})
 target_link_libraries(uav ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
 target_link_libraries(uav_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-endif()
 
-	#################### ROS2 bag replay node (M2) ####################
+	#################### ROS2 bag replay node (M2/M3) ####################
 	add_executable(bag_replay_node src/bag_replay_node.cpp)
-	target_link_libraries(bag_replay_node ${OpenCV_LIBS} Eigen3::Eigen)
+	target_link_libraries(bag_replay_node ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io Eigen3::Eigen)
 	ament_target_dependencies(bag_replay_node
 	  rclcpp sensor_msgs autoaim_msgs cv_bridge)
+endif()
 
 	##################calibration################
 add_executable(capture calibration/capture.cpp)
