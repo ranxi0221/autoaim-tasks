@@ -11,10 +11,29 @@ Gimbal::Gimbal(const std::string & config_path)
 {
   auto yaml = tools::load(config_path);
   auto com_port = tools::read<std::string>(yaml, "com_port");
+  // 可选键：baudrate（ITL 协议 115200，缺省兜底）、q_calib（安装角校准四元数 [x,y,z,w]，缺省单位四元数）
+  auto baudrate = yaml["baudrate"] ? yaml["baudrate"].as<uint32_t>() : 115200;
+  if (yaml["q_calib"]) {
+    auto node = yaml["q_calib"];
+    // 兼容两种写法：列表 [x,y,z,w]（本仓库）与映射 {x:,y:,z:,w:}（ITL 仓库 standard3.yaml）
+    if (node.IsSequence()) {
+      auto v = node.as<std::vector<double>>();
+      q_calib_ = Eigen::Quaterniond(v[3], v[0], v[1], v[2]);
+    } else if (node.IsMap()) {
+      q_calib_ = Eigen::Quaterniond(
+        node["w"].as<double>(), node["x"].as<double>(), node["y"].as<double>(), node["z"].as<double>());
+    } else {
+      tools::logger()->warn("[Gimbal] Invalid q_calib format, use identity.");
+    }
+  }
 
   try {
     serial_.setPort(com_port);
+    serial_.setBaudrate(baudrate);
+    auto timeout = serial::Timeout::simpleTimeout(50);  // 旧版 serial 库 setTimeout 要左值
+    serial_.setTimeout(timeout);
     serial_.open();
+    tools::logger()->info("[Gimbal] Opened {} @ {} baud.", com_port, baudrate);
   } catch (const std::exception & e) {
     tools::logger()->error("[Gimbal] Failed to open serial: {}", e.what());
     exit(1);
@@ -86,8 +105,6 @@ void Gimbal::send(io::VisionToGimbal VisionToGimbal)
   tx_data_.pitch = VisionToGimbal.pitch;
   tx_data_.pitch_vel = VisionToGimbal.pitch_vel;
   tx_data_.pitch_acc = VisionToGimbal.pitch_acc;
-  tx_data_.crc16 = tools::get_crc16(
-    reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_) - sizeof(tx_data_.crc16));
 
   try {
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
@@ -107,8 +124,6 @@ void Gimbal::send(
   tx_data_.pitch = pitch;
   tx_data_.pitch_vel = pitch_vel;
   tx_data_.pitch_acc = pitch_acc;
-  tx_data_.crc16 = tools::get_crc16(
-    reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_) - sizeof(tx_data_.crc16));
 
   try {
     serial_.write(reinterpret_cast<uint8_t *>(&tx_data_), sizeof(tx_data_));
@@ -133,19 +148,27 @@ void Gimbal::read_thread()
   int error_count = 0;
 
   while (!quit_) {
-    if (error_count > 5000) {
+    if (error_count > 100) {
       error_count = 0;
       tools::logger()->warn("[Gimbal] Too many errors, attempting to reconnect...");
       reconnect();
       continue;
     }
 
-    if (!read(reinterpret_cast<uint8_t *>(&rx_data_), sizeof(rx_data_.head))) {
+    // 逐字节扫描帧头 'G' 再验证 'V'（2 字节步进会在流偏移 1 字节时永远无法重同步）
+    if (!read(&rx_data_.head[0], 1)) {
       error_count++;
       continue;
     }
 
-    if (rx_data_.head[0] != 'S' || rx_data_.head[1] != 'P') continue;
+    if (rx_data_.head[0] != 'G') continue;
+
+    if (!read(&rx_data_.head[1], 1)) {
+      error_count++;
+      continue;
+    }
+
+    if (rx_data_.head[1] != 'V') continue;
 
     auto t = std::chrono::steady_clock::now();
 
@@ -156,13 +179,12 @@ void Gimbal::read_thread()
       continue;
     }
 
-    if (!tools::check_crc16(reinterpret_cast<uint8_t *>(&rx_data_), sizeof(rx_data_))) {
-      tools::logger()->debug("[Gimbal] CRC16 check failed.");
-      continue;
-    }
+    // 无 CRC 协议：定长帧 + 帧尾字节校验（与电控固件一致）
+    if (rx_data_.tail != 'G') continue;
 
     error_count = 0;
     Eigen::Quaterniond q(rx_data_.q[0], rx_data_.q[1], rx_data_.q[2], rx_data_.q[3]);
+    q = (q_calib_ * q).normalized();  // 安装角校准，ITL 语义：q_calib 左乘
     queue_.push({q, t});
 
     std::lock_guard<std::mutex> lock(mutex_);

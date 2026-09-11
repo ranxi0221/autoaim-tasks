@@ -14,9 +14,11 @@
 
 namespace io
 {
+// ITL 协议（与电控下位机固件逐字节兼容，见仓库根目录《摆臂部署与协议迁移计划.md》第三节）：
+// 无 CRC，仅帧头 + 帧尾字节校验；波特率 115200；float32 小端；角度均为绝对弧度。
 struct __attribute__((packed)) GimbalToVision
 {
-  uint8_t head[2] = {'S', 'P'};
+  uint8_t head[2] = {'G', 'V'};
   uint8_t mode;  // 0: 空闲, 1: 自瞄, 2: 小符, 3: 大符
   float q[4];    // wxyz顺序
   float yaw;
@@ -25,14 +27,14 @@ struct __attribute__((packed)) GimbalToVision
   float pitch_vel;
   float bullet_speed;
   uint16_t bullet_count;  // 子弹累计发送次数
-  uint16_t crc16;
+  uint8_t tail = 'G';
 };
 
-static_assert(sizeof(GimbalToVision) <= 64);
+static_assert(sizeof(GimbalToVision) == 42);
 
 struct __attribute__((packed)) VisionToGimbal
 {
-  uint8_t head[2] = {'S', 'P'};
+  uint8_t head[2] = {'V', 'G'};
   uint8_t mode;  // 0: 不控制, 1: 控制云台但不开火，2: 控制云台且开火
   float yaw;
   float yaw_vel;
@@ -40,10 +42,10 @@ struct __attribute__((packed)) VisionToGimbal
   float pitch;
   float pitch_vel;
   float pitch_acc;
-  uint16_t crc16;
+  uint8_t tail = 'V';
 };
 
-static_assert(sizeof(VisionToGimbal) <= 64);
+static_assert(sizeof(VisionToGimbal) == 28);
 
 enum class GimbalMode
 {
@@ -90,6 +92,8 @@ private:
 
   GimbalToVision rx_data_;
   VisionToGimbal tx_data_;
+
+  Eigen::Quaterniond q_calib_{Eigen::Quaterniond::Identity()};  // 安装角校准（YAML q_calib [x,y,z,w]）
 
   GimbalMode mode_ = GimbalMode::IDLE;
   GimbalState state_;
