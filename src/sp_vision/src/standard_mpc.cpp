@@ -1,4 +1,7 @@
+#include <yaml-cpp/yaml.h>
+
 #include <chrono>
+#include <cmath>
 #include <opencv2/opencv.hpp>
 #include <thread>
 
@@ -61,11 +64,21 @@ int main(int argc, char * argv[])
   cv::Mat img;
   Eigen::Quaterniond q;
   std::chrono::steady_clock::time_point t;
+  auto last_status_log = std::chrono::steady_clock::now();
 
   std::atomic<bool> quit = false;
 
   std::atomic<io::GimbalMode> mode{io::GimbalMode::IDLE};
   auto last_mode{io::GimbalMode::IDLE};
+
+  // 开火门控参数（ITL 行为：指令角 vs 电控反馈角，容差内才开火；auto_fire=false 可退回纯 planner.fire）
+  auto yaml = YAML::LoadFile(config_path);
+  auto auto_fire = yaml["auto_fire"] ? yaml["auto_fire"].as<bool>() : true;
+  auto first_tol = (yaml["first_tolerance"] ? yaml["first_tolerance"].as<double>() : 1.8) / 57.3;
+  auto second_tol = (yaml["second_tolerance"] ? yaml["second_tolerance"].as<double>() : 1.3) / 57.3;
+  auto judge_distance = yaml["judge_distance"] ? yaml["judge_distance"].as<double>() : 2.0;
+  // 强制工作档（摆臂测试台下位机无档位切换，恒发 mode=0）：force_mode: "auto_aim" 时忽略电控档位
+  auto force_mode = yaml["force_mode"] ? yaml["force_mode"].as<std::string>() : "";
 
   auto plan_thread = std::thread([&]() {
     auto t0 = std::chrono::steady_clock::now();
@@ -77,9 +90,20 @@ int main(int argc, char * argv[])
         auto gs = gimbal.state();
         auto plan = planner.plan(target, gs.bullet_speed);
 
-        gimbal.send(
-          plan.control, plan.fire, plan.yaw, plan.yaw_vel, plan.yaw_acc, plan.pitch, plan.pitch_vel,
-          plan.pitch_acc);
+        bool fire = plan.fire;
+        if (plan.control && auto_fire && target.has_value()) {
+          auto x = target->ekf_x();
+          auto dist = std::hypot(x[0], x[2]);
+          auto tol = dist > judge_distance ? second_tol : first_tol;
+          fire = fire && std::abs(plan.yaw - gs.yaw) < tol && std::abs(plan.pitch - gs.pitch) < tol;
+        }
+
+        if (plan.control)
+          gimbal.send(
+            true, fire, plan.yaw, plan.yaw_vel, plan.yaw_acc, plan.pitch, plan.pitch_vel,
+            plan.pitch_acc);
+        else  // ITL 行为：无目标时 mode=0 回显当前反馈角
+          gimbal.send(false, false, gs.yaw, 0, 0, gs.pitch, 0, 0);
 
         std::this_thread::sleep_for(10ms);
       } else
@@ -89,6 +113,9 @@ int main(int argc, char * argv[])
 
   while (!exiter.exit()) {
     mode = gimbal.mode();
+
+    // 摆臂测试台：下位机恒发 mode=0，force_mode 强制进入自瞄档（真车不配此键）
+    if (force_mode == "auto_aim") mode = io::GimbalMode::AUTO_AIM;
 
     if (last_mode != mode) {
       tools::logger()->info("Switch to {}", gimbal.str(mode));
@@ -105,6 +132,15 @@ int main(int argc, char * argv[])
     if (mode.load() == io::GimbalMode::AUTO_AIM) {
       auto armors = yolo.detect(img);
       auto targets = tracker.track(armors, t);
+
+      // 每秒打印一次检测状态（摆臂调试：不依赖 GUI 窗口也能确认检测/跟踪是否工作）
+      if (tools::delta_time(t, last_status_log) > 1.0) {
+        tools::logger()->info(
+          "[AutoAim] armors={} targets={} state={}", armors.size(), targets.size(),
+          tracker.state());
+        last_status_log = t;
+      }
+
       if (!targets.empty())
         target_queue.push(targets.front());
       else
@@ -134,12 +170,16 @@ int main(int argc, char * argv[])
         buff_plan.pitch, buff_plan.pitch_vel, buff_plan.pitch_acc);
 
     } else
-      gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
+      gimbal.send(false, false, gs.yaw, 0, 0, gs.pitch, 0, 0);  // ITL 行为：IDLE 回显当前反馈角
+
+    // 泵送 GUI 事件：没有 waitKey，YOLO 的 detection 窗口只闪现第一帧不刷新
+    cv::waitKey(1);
   }
 
   quit = true;
   if (plan_thread.joinable()) plan_thread.join();
-  gimbal.send(false, false, 0, 0, 0, 0, 0, 0);
+  auto gs_end = gimbal.state();
+  gimbal.send(false, false, gs_end.yaw, 0, 0, gs_end.pitch, 0, 0);
 
   return 0;
 }
