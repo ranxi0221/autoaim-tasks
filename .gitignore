@@ -20,3 +20,9 @@ bags/
 .github-ca-bundle.crt
 .gh-config/
 .gh-cache/
+
+# 对内自瞄仓库（参考用，不进 git、不参与 colcon 编译）
+Auto_aim/
+
+# 运行日志
+logs/

@@ -85,12 +85,14 @@ endif()
 
 	##################calibration################
 add_executable(capture calibration/capture.cpp)
+add_executable(capture_gimbal calibration/capture_gimbal.cpp)
 add_executable(calibrate_camera calibration/calibrate_camera.cpp)
 add_executable(calibrate_handeye calibration/calibrate_handeye.cpp)
 add_executable(calibrate_robotworld_handeye calibration/calibrate_robotworld_handeye.cpp)
 add_executable(split_video calibration/split_video.cpp)
 
 target_link_libraries(capture ${OpenCV_LIBS} fmt::fmt tools io)
+target_link_libraries(capture_gimbal ${OpenCV_LIBS} fmt::fmt tools io)
 target_link_libraries(calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_robotworld_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
@@ -105,6 +107,7 @@ add_executable(gimbal_response_test tests/gimbal_response_test.cpp)
 add_executable(multi_usbcamera_test tests/multi_usbcamera_test.cpp)
 add_executable(usbcamera_test tests/usbcamera_test.cpp)
 add_executable(dm_test tests/dm_test.cpp)
+add_executable(gimbal_frame_test tests/gimbal_frame_test.cpp)
 
 target_link_libraries(camera_test ${OpenCV_LIBS} fmt::fmt tools io)
 target_link_libraries(cboard_test ${OpenCV_LIBS} fmt::fmt tools io)
@@ -113,6 +116,7 @@ target_link_libraries(gimbal_response_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tool
 target_link_libraries(multi_usbcamera_test ${OpenCV_LIBS} fmt::fmt tools io)
 target_link_libraries(usbcamera_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
 target_link_libraries(dm_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
+target_link_libraries(gimbal_frame_test io)
 
 # 需要 OpenVINO (auto_aim/auto_buff) 的测试
 if(OpenVINO_FOUND)
@@ -179,11 +183,12 @@ install(TARGETS
   auto_buff_debug auto_buff_debug_mpc
   uav uav_debug
   # calibration
-  capture calibrate_camera calibrate_handeye
+  capture capture_gimbal calibrate_camera calibrate_handeye
   calibrate_robotworld_handeye split_video
   # tests (no OpenVINO)
   camera_test cboard_test fire_test gimbal_response_test
   multi_usbcamera_test usbcamera_test dm_test
+  gimbal_frame_test
   # tests (need OpenVINO)
   auto_aim_test auto_buff_test camera_detect_test
   camera_thread_test detector_video_test usbcamera_detect_test
