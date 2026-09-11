@@ -257,11 +257,64 @@ PAIRED [frame 645] ... armors=1 | state=tracking | pos=(1.48,-0.05,-0.31) vel=(-
 
 ---
 
+## M6 — 摆臂实车部署 + ITL 通讯协议迁移（进行中，代码侧完成）
+
+**日期**: 2026-09-09
+
+**完成了什么**:
+- **协议迁移**：`io::Gimbal` 从 sp25 原生 `'S','P'`+CRC16 协议改为 ITL `'V','G'`/`'G','V'` 协议（28B/42B 定长帧、无 CRC 仅头尾字节校验、115200 波特率 + 50ms 超时、逐字节扫描重同步、读错误 >100 重连、`q_calib` 安装角校准）。帧规格逐字节对照电控固件（RM-ITL/Auto_aim 派生自 sp_vision_25，字段布局完全一致，仅帧头/校验/波特率/校准四处差异）
+- **standard_mpc 对齐 ITL 行为**：无目标/IDLE 帧回显当前反馈角（原为发零，避免 mode 切换阶跃）；新增开火门控（指令角 vs 电控反馈角，近 <2m 1.8°/远 1.3°，`auto_fire: false` 可退回纯 planner.fire）
+- **相机驱动**：hikrobot 定分辨率 1280×1024 + 可配置 fps（原为 1440×1080 原生 + 150fps 硬编码，与 1280×1024 标定内参不匹配必毁 PnP）；mindvision 固定 1280×1024（自定义 ROI，失败回退最大分辨率）；camera 工厂读可选键 `image_width/image_height/frame_rate`
+- 新建 `configs/arm_deploy.yaml`（海康/迈德威视两行切换、`baudrate`/`q_calib`/开火容差；内外参为 standard3 占位值，实车标定后替换）
+- 新建 `tests/gimbal_frame_test.cpp`（22 项字节布局断言）、`scripts/mcu_emulator.py`（MCU 仿真器：pty/TCP 双模式、IDLE 回显断言、垃圾注入重同步测试、bullet_count 模拟）
+- 新建 `calibration/capture_gimbal.cpp`（串口协议版标定采集，输出格式与 capture.cpp 一致）
+- 新建 `watchdog.sh`（进程守护重启）、重写 `autostart.sh`（原版路径写死 `~/Desktop/sp_vision_25/`，改为按脚本位置推导）
+
+**怎么验证的**:
+- `gimbal_frame_test` **22/22 ALL PASS**（28/42 字节精确、头尾、逐字段偏移、小端 float/u16）
+- 仿真器帧编解码往返验证通过（42B 反馈帧 / 28B 指令帧定长、头尾、float32 字段与 C++ 断言同值交叉一致）
+- `colcon build` 全量通过，`gimbal_frame_test`/`capture_gimbal`/`standard_mpc` 全部安装到位
+- **环境限制（如实记录）**：Claude Code 执行环境对嵌套 pty 只放行首帧（master 写之后永久阻塞），C++↔仿真器实时回路无法在本机跑通；真机验证命令见下
+
+**修改的文件**: `io/gimbal/gimbal.{hpp,cpp}`、`src/standard_mpc.cpp`、`io/hikrobot/hikrobot.{hpp,cpp}`、`io/mindvision/mindvision.{hpp,cpp}`、`io/camera.cpp`、`CMakeLists.txt`
+**新增的文件**: `configs/arm_deploy.yaml`、`tests/gimbal_frame_test.cpp`、`scripts/mcu_emulator.py`、`calibration/capture_gimbal.cpp`、`watchdog.sh`、`autostart.sh`（重写）
+
+**遇到的主要问题**:
+1. 捆绑 serial 库（wjwwood 旧版）`setTimeout` 参数要左值引用 → 先具名变量再传入
+2. 嵌套 pty 在本开发环境被卡死（首帧后 master 写阻塞，单进程内 pty 正常）→ 仿真器加 `--tcp` 模式 + socat 桥方案绕过，真机仍需按正常 pty 流程验证
+3. 仿真器首版在视觉端未打开串口时 `os.write` OSError 直接退出发送线程 → 改为重试等待
+4. `os.write` 不接收 socket 对象 → TCP 模式用 `fileno()` 归一化为 fd
+5. hikrobot.cpp 新增 `int ret` 与函数内已有 `unsigned int ret` 冲突 → 改名 `ret_wh`
+
+**还没解决什么 / 实车待办**:
+- C++↔仿真器实时回路真机验证（命令见下）；摆臂实车标定（内参/手眼/`R_gimbal2imubody` 校核/`q_calib`）；`arm_deploy.yaml` 内外参替换为实车标定值；相机型号与镜头档确认；实车验收按《摆臂部署与协议迁移计划.md》阶段 F 分步执行
+
+真机端到端验证命令：
+```bash
+# T1: MCU 仿真器（真机 pty 正常，直接 pty 模式；输出 /dev/pts/N）
+python3 src/sp_vision/scripts/mcu_emulator.py --inject-garbage 200
+# T2: 把 /dev/pts/N 填进 /tmp/test_gimbal.yaml 的 com_port（baudrate: 115200）
+ros2 run sp_vision gimbal_test -f /tmp/test_gimbal.yaml
+# 预期：仿真器 fail=0、echo_fail=0、rx>0（收到指令帧）、resync_injections>0 无断连
+```
+
+### 实车验证（2026-09-11，摆臂）
+
+- **硬件**：海康 MV-CA013-21UC（2bdf:0001，原生 1280×1024）+ 下位机 STM32 虚拟串口（0483:5740，udev 软链 `/dev/gimbal` + 0666；注意 `udevadm trigger` 默认 change 事件不生效，需 `--action=add` 或拔插）
+- **串口**：`gimbal_test` `First q received`，15s 零错误零重连 —— **ITL 协议与电控固件真机联通**
+- **相机**：`camera_test` 150fps 稳定；gain 16.9 超出 MV-CA013 范围（`0x80000102`）改 12
+- **检测**：`standard_mpc` + `force_mode: "auto_aim"`（摆臂下位机恒发 mode=0，无档位切换）实时检测蓝色装甲板稳定；每秒检测状态日志 `[AutoAim] armors=...`
+- **可视化修复**：YOLO 检测窗口只闪第一帧不刷新 —— 主循环缺 `cv::waitKey(1)` 泵送 GUI 事件，已补
+- **工作区踩坑**：colcon 曾在 src/sp_vision 内误跑产生嵌套 build/install（已清理）；对内仓库 Auto_aim/ 与 autoaim_msgs 同名包冲突 → COLCON_IGNORE + .gitignore
+- **待办**：符号约定验证（发现下位机 `yaw_vel==pitch_vel` 恒等、只上下转时 yaw 同步变化，待与电控确认固件语义）；标定（内参/手眼/q_calib）；systemd 自启（参考对内仓库 scripts/auto_aim.service）
+
+---
+
 ## 三、项目说明
 
 （按任务书 §4.3，做到 M3 后开始稳定维护）
 
-**项目功能**: 从 rosbag 回放订阅 `/image_raw` + `/imu/quaternion`，同帧同序配对后送 YOLO 检测装甲板，经 PnP 解算 + EKF 跟踪输出世界系目标位置/速度/姿态，发布 `/target/state` 话题供 PlotJuggler 实时画曲线，并定期保存检测与重投影截图。**M1~M5 五个里程碑全部跑通。**
+**项目功能**: 从 rosbag 回放订阅 `/image_raw` + `/imu/quaternion`，同帧同序配对后送 YOLO 检测装甲板，经 PnP 解算 + EKF 跟踪输出世界系目标位置/速度/姿态，发布 `/target/state` 话题供 PlotJuggler 实时画曲线，并定期保存检测与重投影截图。**M1~M5 五个里程碑全部跑通。** 实车入口（M6）：`ros2 run sp_vision standard_mpc configs/arm_deploy.yaml`，经 ITL 串口协议（28B/42B 帧）与电控下位机通信，支持海康/迈德威视相机切换，watchdog.sh 守护重启。
 
 **运行方式**（三终端）:
 ```bash
