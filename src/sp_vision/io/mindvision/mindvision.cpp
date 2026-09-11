@@ -2,6 +2,7 @@
 
 #include <libusb-1.0/libusb.h>
 
+#include <cstring>
 #include <stdexcept>
 
 #include "tools/logger.hpp"
@@ -10,10 +11,13 @@ using namespace std::chrono_literals;
 
 namespace io
 {
-MindVision::MindVision(double exposure_ms, double gamma, const std::string & vid_pid)
+MindVision::MindVision(
+  double exposure_ms, double gamma, const std::string & vid_pid, int width, int height)
 : exposure_ms_(exposure_ms),
   gamma_(gamma),
   handle_(-1),
+  height_(height),
+  width_(width),
   quit_(false),
   ok_(false),
   queue_(1),
@@ -73,15 +77,28 @@ void MindVision::open()
     throw std::runtime_error("Failed to init camera!");
 
   CameraGetCapability(handle_, &camera_capbility);
-  width_ = camera_capbility.sResolutionRange.iWidthMax;
-  height_ = camera_capbility.sResolutionRange.iHeightMax;
+
+  // 定分辨率输出（自定义 ROI）：内参按 width_×height_ 标定，分辨率不一致会毁掉 PnP 解算
+  tSdkImageResolution resolution;
+  memset(&resolution, 0, sizeof(resolution));
+  resolution.iIndex = 0xFF;             // 0xFF 表示自定义分辨率
+  resolution.iWidthFOV = width_;
+  resolution.iHeightFOV = height_;
+  resolution.iWidth = width_;
+  resolution.iHeight = height_;
+  if (CameraSetImageResolution(handle_, &resolution) != CAMERA_STATUS_SUCCESS) {
+    tools::logger()->warn(
+      "Set resolution {}x{} failed, fallback to max resolution.", width_, height_);
+    width_ = camera_capbility.sResolutionRange.iWidthMax;
+    height_ = camera_capbility.sResolutionRange.iHeightMax;
+  }
 
   CameraSetAeState(handle_, FALSE);                        // 关闭自动曝光
   CameraSetExposureTime(handle_, exposure_ms_ * 1e3);      // 设置曝光
   CameraSetGamma(handle_, gamma_ * 1e2);                   // 设置伽马
   CameraSetIspOutFormat(handle_, CAMERA_MEDIA_TYPE_BGR8);  // 设置输出格式为BGR
   CameraSetTriggerMode(handle_, 0);                        // 设置为连续采集模式
-  CameraSetFrameSpeed(handle_, 1);                         // 设置为低帧率模式
+  CameraSetFrameSpeed(handle_, 1);                         // 设置为普通帧率模式
 
   CameraPlay(handle_);
 

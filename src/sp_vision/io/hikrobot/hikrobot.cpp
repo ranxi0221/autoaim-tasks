@@ -8,8 +8,18 @@ using namespace std::chrono_literals;
 
 namespace io
 {
-HikRobot::HikRobot(double exposure_ms, double gain, const std::string & vid_pid)
-: exposure_us_(exposure_ms * 1e3), gain_(gain), queue_(1), daemon_quit_(false), vid_(-1), pid_(-1)
+HikRobot::HikRobot(
+  double exposure_ms, double gain, const std::string & vid_pid, int width, int height,
+  double frame_rate)
+: exposure_us_(exposure_ms * 1e3),
+  gain_(gain),
+  width_(width),
+  height_(height),
+  frame_rate_(frame_rate),
+  queue_(1),
+  daemon_quit_(false),
+  vid_(-1),
+  pid_(-1)
 {
   set_vid_pid(vid_pid);
   if (libusb_init(NULL)) tools::logger()->warn("Unable to init libusb!");
@@ -87,7 +97,12 @@ void HikRobot::capture_start()
   set_enum_value("GainAuto", MV_GAIN_MODE_OFF);
   set_float_value("ExposureTime", exposure_us_);
   set_float_value("Gain", gain_);
-  MV_CC_SetFrameRate(handle_, 150);
+  // 定分辨率输出：内参按 width×height 标定，分辨率不一致会毁掉 PnP 解算
+  int ret_wh = MV_CC_SetIntValueEx(handle_, "Width", width_);
+  if (ret_wh != MV_OK) tools::logger()->warn("Set Width {} failed: {:#x}", width_, ret_wh);
+  ret_wh = MV_CC_SetIntValueEx(handle_, "Height", height_);
+  if (ret_wh != MV_OK) tools::logger()->warn("Set Height {} failed: {:#x}", height_, ret_wh);
+  MV_CC_SetFrameRate(handle_, frame_rate_);
 
   ret = MV_CC_StartGrabbing(handle_);
   if (ret != MV_OK) {

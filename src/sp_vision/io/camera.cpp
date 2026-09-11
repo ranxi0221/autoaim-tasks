@@ -13,17 +13,21 @@ Camera::Camera(const std::string & config_path)
   auto yaml = tools::load(config_path);
   auto camera_name = tools::read<std::string>(yaml, "camera_name");
   auto exposure_ms = tools::read<double>(yaml, "exposure_ms");
+  // 可选键：定分辨率输出（内参按 1280×1024 标定）与帧率
+  auto width = yaml["image_width"] ? yaml["image_width"].as<int>() : 1280;
+  auto height = yaml["image_height"] ? yaml["image_height"].as<int>() : 1024;
+  auto frame_rate = yaml["frame_rate"] ? yaml["frame_rate"].as<double>() : 150.0;
 
   if (camera_name == "mindvision") {
     auto gamma = tools::read<double>(yaml, "gamma");
     auto vid_pid = tools::read<std::string>(yaml, "vid_pid");
-    camera_ = std::make_unique<MindVision>(exposure_ms, gamma, vid_pid);
+    camera_ = std::make_unique<MindVision>(exposure_ms, gamma, vid_pid, width, height);
   }
 
   else if (camera_name == "hikrobot") {
     auto gain = tools::read<double>(yaml, "gain");
     auto vid_pid = tools::read<std::string>(yaml, "vid_pid");
-    camera_ = std::make_unique<HikRobot>(exposure_ms, gain, vid_pid);
+    camera_ = std::make_unique<HikRobot>(exposure_ms, gain, vid_pid, width, height, frame_rate);
   }
 
   else {

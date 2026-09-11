@@ -1,0 +1,115 @@
+# 摆臂实车部署配置（ITL 串口协议版，standard_mpc 主程序）
+# 相机切换：改 camera_name + vid_pid 两行即可（海康/迈德威视互切）
+# 注意：camera_matrix/distort_coeffs/R_camera2gimbal/t_camera2gimbal/R_gimbal2imubody 为
+# standard3 的 6mm 档占位值，实车标定后必须替换（见仓库根目录《摆臂部署与协议迁移计划.md》阶段 D）
+
+# enemy_color: "red"   # 己方为蓝时打红
+enemy_color: "blue"   # 己方为红时打蓝（bag 场景为蓝方装甲板）
+
+#####-----神经网络参数-----#####
+yolo_name: yolov5
+classify_model: assets/tiny_resnet.onnx
+yolo11_model_path: assets/yolo11.xml
+yolov8_model_path: assets/yolov8.xml
+yolov5_model_path: assets/yolov5.xml
+device: CPU
+min_confidence: 0.8
+use_traditional: true
+
+#####-----ROI-----#####
+roi:
+  x: 420
+  y: 50
+  width: 600
+  height: 600
+
+use_roi: false
+
+#####-----传统方法参数-----#####
+threshold: 150
+max_angle_error: 45 # degree
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25 # degree
+
+#####-----tracker参数-----#####
+min_detect_count: 5
+max_temp_lost_count: 15
+outpost_max_temp_lost_count: 75
+
+#####-----aimer参数-----#####
+yaw_offset: 2 # degree -2.5
+pitch_offset: 6.5 # degree 2
+comming_angle: 55 # degree
+leaving_angle: 20 # degree
+decision_speed: 7 # rad/s
+high_speed_delay_time: 0.0 # s
+low_speed_delay_time: 0.0 # s planner use this value
+
+#####-----shooter参数（开火门控，ITL 数值：近<2m 1.8°/远 1.3°）-----#####
+first_tolerance: 1.8 # 近距离射击容差，degree（指令角 vs 电控反馈角）
+second_tolerance: 1.3 # 远距离射击容差，degree
+judge_distance: 2 # 距离判断阈值
+auto_fire: true # 是否由自瞄控制射击；false 时退回纯 planner.fire
+
+#####-----相机（海康/迈德威视互切：改 camera_name + vid_pid）-----#####
+camera_name: "hikrobot"          # "hikrobot" 海康 MVS / "mindvision" 迈德威视
+exposure_ms: 2.5                 # 海康实车打光下微调（迈德威视模板值 2）
+gain: 12                         # 海康增益（MV-CA013 上限约 15，16.9 超范围会设置失败，ITL 参考值 12）
+gamma: 0.5                       # 迈德威视 gamma（两键共存，工厂按 camera_name 只读其一）
+vid_pid: "2bdf:0001"             # 海康 MV-CS016-10UC；迈德威视用 "f622:d13a"
+frame_rate: 150                  # 相机帧率（海康/迈德威视通用）
+image_width: 1280                # 定分辨率输出：内参按 1280×1024 标定，不可随意改
+image_height: 1024
+
+# 6mm 镜头档（1280×1024 标定，standard3 占位值——实车标定后替换）
+#  0  1  0
+# -1  0  0
+#  0  0  1
+R_gimbal2imubody: [0, 1, 0, -1, 0, 0, 0, 0, 1]
+
+# 重投影误差: 6mm 档（占位）
+camera_matrix: [1291.2365779471, 0, 622.5361271492, 0, 1291.6532761007, 497.3760733938, 0, 0, 1]
+distort_coeffs: [-0.0837411641, 0.1316900341, -0.0001941245, -0.0004098046, 0.0]
+
+# 相机→云台外参（standard3 占位值——实车手眼标定后替换）
+R_camera2gimbal: [0.0248055224, -0.0172352660, 0.9995437117, -0.9985846022, -0.0474822914, 0.0239629768, 0.0470476175, -0.9987233739, -0.0183886942]
+t_camera2gimbal: [0.1640166852, 0.0527662433, 0.0192375745]
+
+#####-----cboard参数（CAN 通道，本配置不走，保留供 standard 使用）-----#####
+quaternion_canid: 0x100
+bullet_speed_canid: 0x101
+send_canid: 0xff
+can_interface: "can0"
+
+#####-----gimbal参数（ITL 串口协议）-----#####
+com_port: "/dev/gimbal"          # udev 软链到 MCU 虚拟串口（流程见 readme.md 串口设置节）
+baudrate: 115200                 # ITL 协议波特率，勿改
+force_mode: "auto_aim"           # 摆臂测试台：下位机恒发 mode=0，强制进自瞄档；真车删掉此行（跟随电控档位）
+q_calib: [0, 0, 0, 1]            # IMU 安装角校准四元数 [x,y,z,w]，云台物理水平时标定
+yaw_kp: 0
+yaw_kd: 0
+pitch_kp: 0
+pitch_kd: 0
+
+#####-----planner-----#####
+fire_thresh: 0.0035
+
+max_yaw_acc: 50
+Q_yaw: [9e6, 0]
+R_yaw: [1]
+
+max_pitch_acc: 100
+Q_pitch: [9e6, 0]
+R_pitch: [1]
+
+#####-----buff_detector参数-----#####
+model: "assets/yolo11_buff_int8.xml"
+
+#####-----buff_aimer参数-----#####
+fire_gap_time: 0.700   # s
+predict_time: 0.120    # s
