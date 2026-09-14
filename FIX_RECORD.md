@@ -308,6 +308,12 @@ ros2 run sp_vision gimbal_test -f /tmp/test_gimbal.yaml
 - **工作区踩坑**：colcon 曾在 src/sp_vision 内误跑产生嵌套 build/install（已清理）；对内仓库 Auto_aim/ 与 autoaim_msgs 同名包冲突 → COLCON_IGNORE + .gitignore
 - **待办**：符号约定验证（发现下位机 `yaw_vel==pitch_vel` 恒等、只上下转时 yaw 同步变化，待与电控确认固件语义）；标定（内参/手眼/q_calib）；systemd 自启（参考对内仓库 scripts/auto_aim.service）
 
+### 实车验证（2026-09-12）
+
+- **符号约定结案**：确认摆臂为**两轴机械联动**（一起转动）——yaw/pitch 同步变化、`yaw_vel==pitch_vel` 均为联动机制所致，固件正常，无需改动
+- **标定值采用队内配置**：`arm_deploy.yaml` 填入对内仓库 `Auto_aim/src/config/standard3.yaml`「老步兵——摆臂」的整套标定（6mm 档内参 fx=1330.65/fy=1332.30/cx=627.28/cy=533.28、相机→云台外参标准变换阵 + t=[0.1519,0.0756,0.0222]、tracker 参数、曝光 3.0ms）；`[AutoAim]` 状态日志增加世界系 pos 输出
+- **验证通过**：检测+跟踪状态正常，目标世界系位置与实际距离吻合（队内标定值适配摆臂相机）
+
 ---
 
 ## 三、项目说明
