@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <fmt/core.h>
 #include <opencv2/opencv.hpp>
 #include <thread>
 
@@ -79,6 +80,10 @@ int main(int argc, char * argv[])
   auto judge_distance = yaml["judge_distance"] ? yaml["judge_distance"].as<double>() : 2.0;
   // 强制工作档（摆臂测试台下位机无档位切换，恒发 mode=0）：force_mode: "auto_aim" 时忽略电控档位
   auto force_mode = yaml["force_mode"] ? yaml["force_mode"].as<std::string>() : "";
+  // 敌方颜色（与 tracker 构造逻辑一致），运行时可用 r/b 键切换
+  auto enemy_color =
+    (yaml["enemy_color"] && yaml["enemy_color"].as<std::string>() == "red") ? auto_aim::Color::red
+                                                                            : auto_aim::Color::blue;
 
   auto plan_thread = std::thread([&]() {
     auto t0 = std::chrono::steady_clock::now();
@@ -135,9 +140,14 @@ int main(int argc, char * argv[])
 
       // 每秒打印一次检测状态（摆臂调试：不依赖 GUI 窗口也能确认检测/跟踪是否工作）
       if (tools::delta_time(t, last_status_log) > 1.0) {
+        std::string pos_str;
+        if (!targets.empty()) {
+          auto x = targets.front().ekf_x();
+          pos_str = fmt::format(" pos=({:.2f},{:.2f},{:.2f})m", x[0], x[2], x[4]);
+        }
         tools::logger()->info(
-          "[AutoAim] armors={} targets={} state={}", armors.size(), targets.size(),
-          tracker.state());
+          "[AutoAim] color={} armors={} targets={} state={}{}", auto_aim::COLORS[enemy_color],
+          armors.size(), targets.size(), tracker.state(), pos_str);
         last_status_log = t;
       }
 
@@ -172,8 +182,18 @@ int main(int argc, char * argv[])
     } else
       gimbal.send(false, false, gs.yaw, 0, 0, gs.pitch, 0, 0);  // ITL 行为：IDLE 回显当前反馈角
 
-    // 泵送 GUI 事件：没有 waitKey，YOLO 的 detection 窗口只闪现第一帧不刷新
-    cv::waitKey(1);
+    // 泵送 GUI 事件：没有 waitKey，YOLO 的 detection 窗口只闪现第一帧不刷新。
+    // 同时支持键盘切换敌方颜色（演示用）：点击 detection 窗口获得焦点后，r=红色敌方，b=蓝色敌方
+    auto key = cv::waitKey(1);
+    if (key == 'r' && enemy_color != auto_aim::Color::red) {
+      enemy_color = auto_aim::Color::red;
+      tracker.set_enemy_color(enemy_color);
+      tools::logger()->info("[AutoAim] 敌方颜色切换为 red（按键 r=红 / b=蓝）");
+    } else if (key == 'b' && enemy_color != auto_aim::Color::blue) {
+      enemy_color = auto_aim::Color::blue;
+      tracker.set_enemy_color(enemy_color);
+      tools::logger()->info("[AutoAim] 敌方颜色切换为 blue（按键 r=红 / b=蓝）");
+    }
   }
 
   quit = true;

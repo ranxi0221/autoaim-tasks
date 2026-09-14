@@ -21,6 +21,10 @@ public:
 
   std::string state() const;
 
+  // 运行时切换敌方颜色（演示用，配合 standard_mpc 的 r/b 按键）
+  void set_enemy_color(Color color) { enemy_color_ = color; }
+  Color enemy_color() const { return enemy_color_; }
+
   std::list<Target> track(
     std::list<Armor> & armors, std::chrono::steady_clock::time_point t,
     bool use_enemy_color = true);
